@@ -5,19 +5,22 @@ import type { MatchedHook } from 'claude-code';
 import { jevAsker, register } from '../hooks/fast-jev-output.js';
 import type { HookFetch } from '../hooks/fast-jev-output.js';
 import type { ConversationMessage } from '../src/history.js';
-import { estimateStateTokens } from '../src/jev.js';
-import type { JevAsker, JevQuestions, JevState } from '../src/jev.js';
+import { estimateStateTokens, jevEndpoint } from '../src/jev.js';
+import type { JevAsker, JevProvider, JevQuestions, JevState } from '../src/jev.js';
 import { classifyOutput, trimOutput } from '../src/output.js';
 
-const apiKey = process.env.TYPESAFE_API_KEY;
-assert(apiKey, 'Set TYPESAFE_API_KEY before running the live Jev tests.');
+const provider: JevProvider = process.env.JEV_LIVE_PROVIDER === 'openrouter' ? 'openrouter' : 'typesafe';
+const keyVariable = provider === 'openrouter' ? 'OPENROUTER_API_KEY' : 'TYPESAFE_API_KEY';
+const apiKey = process.env[keyVariable];
+assert(apiKey, `Set ${keyVariable} before running the live Jev tests.`);
+const endpoint = jevEndpoint(provider);
 
 function liveAsker(t: TestContext) {
   const requests: { state: JevState; questions: JevQuestions }[] = [];
   const client = jevAsker(async (url, init) => {
     const response = await fetch(url, { ...init, signal: AbortSignal.timeout(90_000) });
     return { status: response.status, ok: response.ok, text: await response.text() };
-  }, apiKey!, 'jev-latest');
+  }, apiKey!, endpoint.model, endpoint.url);
   const asker: JevAsker = {
     async ask(state, questions) {
       requests.push({ state, questions });
@@ -281,7 +284,7 @@ test('live Jev accepts digit-heavy output across complete history segments', { t
 test('the Bash hook fails open when live Jev rejects authentication', { timeout: 120_000 }, async (t) => {
   type BashHook = MatchedHook<'tool.call', { tool: 'Bash' }>;
   const on = mock.fn((..._args: unknown[]) => ({ catch() {} }));
-  register(on, { apiKey: 'invalid-live-test-key' });
+  register(on, { apiKey: 'invalid-live-test-key', provider });
   const hook = on.mock.calls[0]!.arguments[2] as BashHook;
   const statuses: number[] = [];
   const logs: string[] = [];
