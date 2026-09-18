@@ -6,9 +6,14 @@
   "userConfig": {
     "apiKey": {
       "type": "string",
-      "title": "TypeSafe API key",
-      "description": "TypeSafe API key. Leave unset to use TYPESAFE_API_KEY.",
+      "title": "Jev API key",
+      "description": "TypeSafe or OpenRouter API key. OpenRouter keys (sk-or-...) are sent to OpenRouter. Leave unset to use TYPESAFE_API_KEY, or OPENROUTER_API_KEY when the provider is openrouter.",
       "sensitive": true
+    },
+    "provider": {
+      "type": "string",
+      "title": "Jev provider",
+      "description": "typesafe or openrouter. Leave unset to use TypeSafe unless the key is an OpenRouter key."
     },
     "minTokens": {
       "type": "number",
@@ -49,8 +54,13 @@
     "model": {
       "type": "string",
       "title": "Jev model",
-      "description": "TypeSafe Jev model name.",
+      "description": "Jev model name. jev-latest maps to ~typesafe/jev-latest on OpenRouter.",
       "default": "jev-latest"
+    },
+    "baseUrl": {
+      "type": "string",
+      "title": "Jev endpoint URL",
+      "description": "Overrides the provider's Jev endpoint, for example a proxy."
     }
   }
 }

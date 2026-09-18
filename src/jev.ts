@@ -1,5 +1,30 @@
 export const SYSTEM_ONE_URL = 'https://api.typesafe.ai/v1/systemone';
 export const DEFAULT_MODEL = 'jev-latest';
+/** OpenRouter's decisions endpoint serves the same request and answer shapes. */
+export const OPENROUTER_DECISIONS_URL = 'https://openrouter.ai/api/alpha/decisions';
+/** OpenRouter's always-latest alias for TypeSafe's Jev. */
+export const OPENROUTER_DEFAULT_MODEL = '~typesafe/jev-latest';
+
+/** Where Jev requests go: TypeSafe directly, or TypeSafe through OpenRouter. */
+export type JevProvider = 'typesafe' | 'openrouter';
+
+/** OpenRouter keys carry this prefix; TypeSafe rejects them. */
+export function isOpenRouterKey(apiKey: string): boolean {
+  return apiKey.startsWith('sk-or-');
+}
+
+/** Endpoint and model for a provider; `model` and `baseUrl` override the defaults. */
+export function jevEndpoint(
+  provider: JevProvider,
+  overrides: { model?: string; baseUrl?: string } = {},
+): { url: string; model: string } {
+  const openRouter = provider === 'openrouter';
+  const model = overrides.model ?? DEFAULT_MODEL;
+  return {
+    url: overrides.baseUrl ?? (openRouter ? OPENROUTER_DECISIONS_URL : SYSTEM_ONE_URL),
+    model: openRouter && model === DEFAULT_MODEL ? OPENROUTER_DEFAULT_MODEL : model,
+  };
+}
 
 /** The `state` of a Jev request: a string or any JSON-serialisable object. */
 export type JevState = string | object;
@@ -55,6 +80,8 @@ export interface JevResponse {
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
+    /** Billed USD, reported by OpenRouter. */
+    cost?: number;
   };
   [key: string]: unknown;
 }

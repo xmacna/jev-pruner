@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getApiKey, looksSecret, resolveHookConfig } from '../hooks/fast-jev-output.ts';
+import { getApiKey, getJevCredentials, looksSecret, resolveHookConfig } from '../hooks/fast-jev-output.ts';
+import { OPENROUTER_DECISIONS_URL, SYSTEM_ONE_URL, jevEndpoint } from '../src/jev.ts';
 
 describe('hook configuration', () => {
   it('uses the documented defaults', () => {
@@ -36,6 +37,25 @@ describe('hook configuration', () => {
       maxStateTokens: 5_000,
       model: 'jev-custom',
     });
+  });
+});
+
+describe('provider configuration', () => {
+  it('leaves the provider unset by default and accepts known providers and a base URL', () => {
+    expect(resolveHookConfig({})).not.toHaveProperty('provider');
+    expect(resolveHookConfig({ provider: 'openrouter', baseUrl: 'https://proxy.test' })).toMatchObject({
+      provider: 'openrouter',
+      baseUrl: 'https://proxy.test',
+    });
+    expect(resolveHookConfig({ provider: 'elsewhere' })).not.toHaveProperty('provider');
+  });
+
+  it('maps each provider to its endpoint and default model', () => {
+    expect(jevEndpoint('typesafe')).toEqual({ url: SYSTEM_ONE_URL, model: 'jev-latest' });
+    expect(jevEndpoint('openrouter')).toEqual({ url: OPENROUTER_DECISIONS_URL, model: '~typesafe/jev-latest' });
+    expect(jevEndpoint('openrouter', { model: 'jev-latest' }).model).toBe('~typesafe/jev-latest');
+    expect(jevEndpoint('openrouter', { model: '~typesafe/jev-1' }).model).toBe('~typesafe/jev-1');
+    expect(jevEndpoint('typesafe', { baseUrl: 'https://proxy.test' }).url).toBe('https://proxy.test');
   });
 });
 
@@ -76,5 +96,37 @@ describe('archive failure', () => {
       '; not saved to disk, re-run the command if you need these lines',
     );
     expect(fallback).toBe('[fast-jev-output trimmed 40 lines (900 chars); not saved to disk, re-run the command if you need these lines]');
+  });
+});
+
+describe('provider credentials', () => {
+  const $ = (env: Record<string, string>, settings: Record<string, unknown> = {}) => ({
+    env: { get: async (name: string) => env[name] },
+    settings: { read: async () => settings },
+  });
+  const config = (options: Record<string, string> = {}) => resolveHookConfig(options);
+
+  it('keeps TypeSafe for TypeSafe keys and ignores an unrelated OPENROUTER_API_KEY', async () => {
+    expect(await getJevCredentials($({ TYPESAFE_API_KEY: 'ts-key', OPENROUTER_API_KEY: 'sk-or-v1-x' }), config()))
+      .toEqual({ apiKey: 'ts-key', provider: 'typesafe' });
+    expect(await getJevCredentials($({ OPENROUTER_API_KEY: 'sk-or-v1-x' }), config())).toBeUndefined();
+  });
+
+  it('switches to OpenRouter when the configured key is an OpenRouter key', async () => {
+    expect(await getJevCredentials($({}), config({ apiKey: 'sk-or-v1-x' })))
+      .toEqual({ apiKey: 'sk-or-v1-x', provider: 'openrouter' });
+    expect(await getJevCredentials($({}), config({ apiKey: 'sk-or-v1-x', provider: 'typesafe' })))
+      .toEqual({ apiKey: 'sk-or-v1-x', provider: 'typesafe' });
+  });
+
+  it('reads OPENROUTER_API_KEY and its fallbacks only when OpenRouter is selected', async () => {
+    const openRouter = config({ provider: 'openrouter' });
+    expect(await getJevCredentials($({ TYPESAFE_API_KEY: 'ts-key', OPENROUTER_API_KEY: 'or-env' }), openRouter))
+      .toEqual({ apiKey: 'or-env', provider: 'openrouter' });
+    expect(await getJevCredentials($({ EVAL_OPENROUTER_API_KEY: 'or-eval' }), openRouter))
+      .toEqual({ apiKey: 'or-eval', provider: 'openrouter' });
+    expect(await getJevCredentials($({}, { env: { OPENROUTER_API_KEY: 'or-settings' } }), openRouter))
+      .toEqual({ apiKey: 'or-settings', provider: 'openrouter' });
+    expect(await getJevCredentials($({ TYPESAFE_API_KEY: 'ts-key' }), openRouter)).toBeUndefined();
   });
 });

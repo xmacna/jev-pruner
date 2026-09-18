@@ -3,11 +3,12 @@ import type { BuiltinToolResults, MatchedHook } from 'claude-code';
 import { register } from '../hooks/fast-jev-output.js';
 import type { HookConfig, HookFetchInit } from '../hooks/fast-jev-output.js';
 import type { ConversationMessage } from '../src/history.js';
+import { OPENROUTER_DECISIONS_URL, SYSTEM_ONE_URL } from '../src/jev.js';
 import type { JevQuestions } from '../src/jev.js';
 
 type BashHook = MatchedHook<'tool.call', { tool: 'Bash' }>;
 
-function harness(options: Partial<HookConfig> = {}) {
+function harness(options: Partial<HookConfig> = {}, usage?: Record<string, number>) {
   const on = vi.fn();
   register(on, { apiKey: 'mock-key', ...options });
   expect(on).toHaveBeenCalledWith('tool.call', { tool: 'Bash' }, expect.any(Function));
@@ -28,6 +29,7 @@ function harness(options: Partial<HookConfig> = {}) {
       ok: true,
       text: JSON.stringify({
         answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { noul: 0.1 }])),
+        ...(usage ? { usage } : {}),
       }),
     };
   });
@@ -38,7 +40,7 @@ function harness(options: Partial<HookConfig> = {}) {
     session: { messages: readMessages },
     http: { fetch },
     fs: { exists: async () => false, read, write },
-    ui: { log: vi.fn(), toast: vi.fn() },
+    ui: { log: vi.fn((_line: string) => {}), toast: vi.fn() },
   };
   const original: { result: BuiltinToolResults['Bash'] } = {
     result: {
@@ -49,7 +51,7 @@ function harness(options: Partial<HookConfig> = {}) {
   };
   const next = vi.fn(async () => original);
   return {
-    bodies, messages, readMessages, read, fetch, write, original, next,
+    bodies, messages, readMessages, read, fetch, write, original, next, log: host.ui.log,
     run: () => hook(
       host as unknown as Parameters<BashHook>[0],
       { tool: 'Bash', command: 'build', tool_use_id: 'bash-test' },
@@ -212,5 +214,43 @@ describe('Bash output archives', () => {
     expect(h.fetch).toHaveBeenCalled();
     expect(result.result).toMatchObject({ stdout: expect.stringContaining('not saved to disk') });
     expect(result.result).not.toMatchObject({ stdout: expect.stringContaining('full output:') });
+  });
+});
+
+describe('Jev provider', () => {
+  const sent = (h: ReturnType<typeof harness>) => h.fetch.mock.calls.map(([url, init]) => ({
+    url,
+    model: (JSON.parse(init?.body ?? '{}') as { model: string }).model,
+    authorization: init?.headers?.authorization,
+  }));
+
+  it('sends requests to TypeSafe with a TypeSafe key, as before', async () => {
+    const h = harness();
+    expect((await h.run()).result).not.toBe(h.original.result);
+    expect(new Set(sent(h).map(({ url, model }) => `${url} ${model}`))).toEqual(
+      new Set([`${SYSTEM_ONE_URL} jev-latest`]),
+    );
+    expect(h.log.mock.calls.at(-1)![0]).not.toContain('cost=');
+  });
+
+  it('routes an OpenRouter key to OpenRouter and logs the billed cost', async () => {
+    const h = harness({ apiKey: 'sk-or-v1-mock' }, { input_tokens: 100, output_tokens: 1, cost: 0.00025 });
+    expect((await h.run()).result).not.toBe(h.original.result);
+    const requests = sent(h);
+    expect(requests.length).toBeGreaterThan(0);
+    for (const request of requests) {
+      expect(request).toEqual({
+        url: OPENROUTER_DECISIONS_URL,
+        model: '~typesafe/jev-latest',
+        authorization: 'Bearer sk-or-v1-mock',
+      });
+    }
+    expect(h.log.mock.calls.at(-1)![0]).toContain(`cost=$${(0.00025 * requests.length).toFixed(6)}`);
+  });
+
+  it('honours model and endpoint overrides', async () => {
+    const h = harness({ provider: 'openrouter', model: 'jev-custom', baseUrl: 'https://proxy.test/decisions' });
+    await h.run();
+    expect(sent(h)[0]).toMatchObject({ url: 'https://proxy.test/decisions', model: 'jev-custom' });
   });
 });

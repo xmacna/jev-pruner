@@ -5,9 +5,15 @@ import type {
   SessionMessage,
 } from 'claude-code';
 
-import { DEFAULT_MODEL, buildJevRequest, parseJevResponse } from '../src/jev.js';
+import {
+  DEFAULT_MODEL,
+  buildJevRequest,
+  isOpenRouterKey,
+  jevEndpoint,
+  parseJevResponse,
+} from '../src/jev.js';
 import { exceedsOutputThreshold, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
-import type { JevAsker } from '../src/jev.js';
+import type { JevAsker, JevProvider } from '../src/jev.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
 const DEFAULTS = {
@@ -45,6 +51,9 @@ export type HookConfig = {
   persistedOutputs: boolean;
   persistedMaxChars: number;
   model: string;
+  /** Unset: TypeSafe, unless the key found is an OpenRouter key. */
+  provider?: JevProvider;
+  baseUrl?: string;
 };
 
 function optionNumber(options: PluginOptions, key: string, fallback: number): number {
@@ -70,13 +79,22 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   };
   const apiKey = optionString(options, 'apiKey');
   if (apiKey) config.apiKey = apiKey;
+  const provider = optionString(options, 'provider');
+  if (provider === 'typesafe' || provider === 'openrouter') config.provider = provider;
+  const baseUrl = optionString(options, 'baseUrl');
+  if (baseUrl) config.baseUrl = baseUrl;
   return config;
 }
 
-export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string): JevAsker {
+export function jevAsker(
+  fetchFn: HookFetch,
+  apiKey: string,
+  model: string,
+  baseUrl?: string,
+): JevAsker {
   return {
     async ask(state, questions) {
-      const request = buildJevRequest({ apiKey, model }, state, questions);
+      const request = buildJevRequest({ apiKey, model, baseUrl }, state, questions);
       const response = await fetchFn(request.url, {
         method: request.method,
         headers: request.headers,
@@ -100,28 +118,62 @@ export function goalFromMessages(messages: readonly SessionMessage[]): string {
     .join('\n');
 }
 
-/** Key lookup order: plugin option, TYPESAFE_API_KEY, EVAL_TYPESAFE_API_KEY, settings env. */
-export async function getApiKey(
-  $: {
-    env: { get: (name: string) => Promise<string | undefined> };
-    settings: { read: () => Promise<Readonly<Record<string, unknown>>> };
-  },
-  config: HookConfig,
-): Promise<string | undefined> {
-  if (config.apiKey) return config.apiKey;
-  const fromEnv = await $.env.get('TYPESAFE_API_KEY');
-  if (fromEnv) return fromEnv;
-  // `claude plugin eval` runs with a fresh HOME and a scrubbed environment, and
-  // passes through only EVAL_* variables, so this is the eval suite's key path.
-  const fromEvalEnv = await $.env.get('EVAL_TYPESAFE_API_KEY');
-  if (fromEvalEnv) return fromEvalEnv;
-  const settings = await $.settings.read();
+type KeySources = {
+  env: { get: (name: string) => Promise<string | undefined> };
+  settings: { read: () => Promise<Readonly<Record<string, unknown>>> };
+};
+
+function settingsEnv(settings: Readonly<Record<string, unknown>>, name: string): string | undefined {
   const env = settings['env'];
-  if (env && typeof env === 'object') {
-    const value = (env as Record<string, unknown>)['TYPESAFE_API_KEY'];
-    if (typeof value === 'string' && value) return value;
+  if (!env || typeof env !== 'object') return undefined;
+  const value = (env as Record<string, unknown>)[name];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+// `claude plugin eval` runs with a fresh HOME and a scrubbed environment, and
+// passes through only EVAL_* variables, so those are the eval suite's key path.
+// Variable names stay literal: the plugin validator lists what `$.env.get` reads.
+
+/** Key lookup order: plugin option, TYPESAFE_API_KEY, EVAL_TYPESAFE_API_KEY, settings env. */
+export async function getApiKey($: KeySources, config: HookConfig): Promise<string | undefined> {
+  if (config.apiKey) return config.apiKey;
+  return (
+    (await $.env.get('TYPESAFE_API_KEY')) ||
+    (await $.env.get('EVAL_TYPESAFE_API_KEY')) ||
+    settingsEnv(await $.settings.read(), 'TYPESAFE_API_KEY')
+  );
+}
+
+async function getOpenRouterKey($: KeySources, config: HookConfig): Promise<string | undefined> {
+  if (config.apiKey) return config.apiKey;
+  return (
+    (await $.env.get('OPENROUTER_API_KEY')) ||
+    (await $.env.get('EVAL_OPENROUTER_API_KEY')) ||
+    settingsEnv(await $.settings.read(), 'OPENROUTER_API_KEY')
+  );
+}
+
+/**
+ * The key and the provider it belongs to. With `provider: "openrouter"` the
+ * key comes from the plugin option or OPENROUTER_API_KEY (same fallbacks as
+ * TYPESAFE_API_KEY). Otherwise lookup is unchanged and only an OpenRouter-style
+ * key found there switches to OpenRouter; an OPENROUTER_API_KEY that is set for
+ * other tools is never picked up on its own.
+ */
+export async function getJevCredentials(
+  $: KeySources,
+  config: HookConfig,
+): Promise<{ apiKey: string; provider: JevProvider } | undefined> {
+  if (config.provider === 'openrouter') {
+    const apiKey = await getOpenRouterKey($, config);
+    return apiKey ? { apiKey, provider: 'openrouter' } : undefined;
   }
-  return undefined;
+  const apiKey = await getApiKey($, config);
+  if (!apiKey) return undefined;
+  return {
+    apiKey,
+    provider: config.provider ?? (isOpenRouterKey(apiKey) ? 'openrouter' : 'typesafe'),
+  };
 }
 
 const SECRET_COMMAND =
@@ -146,8 +198,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const output = persisted ? await $.fs.read(persisted) : record.stdout;
       if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
       const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
-      const apiKey = await getApiKey($, configured);
-      if (!apiKey) return answer;
+      const credentials = await getJevCredentials($, configured);
+      if (!credentials) return answer;
+      const endpoint = jevEndpoint(credentials.provider, configured);
       const messages = await $.session.messages();
       const goal = goalFromMessages(messages);
       const secret = looksSecret(event.command, combined);
@@ -166,6 +219,17 @@ export const register: Register = (on: On, options: PluginOptions) => {
         if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
         await $.fs.write(path, combined);
       };
+      const asker = jevAsker(
+        async (url, init) => {
+          if (path) await (archived ??= saveOutput());
+          const response = await $.http.fetch(url, init);
+          return { status: response.status, ok: response.ok, text: response.text };
+        },
+        credentials.apiKey,
+        endpoint.model,
+        endpoint.url,
+      );
+      let cost: number | undefined;
       const trimmed = await trimOutput(
         {
           command: event.command,
@@ -174,15 +238,14 @@ export const register: Register = (on: On, options: PluginOptions) => {
           output,
           fullOutputPath: path,
         },
-        jevAsker(
-          async (url, init) => {
-            if (path) await (archived ??= saveOutput());
-            const response = await $.http.fetch(url, init);
-            return { status: response.status, ok: response.ok, text: response.text };
+        {
+          async ask(state, questions) {
+            const response = await asker.ask(state, questions);
+            const billed = response.usage?.cost;
+            if (typeof billed === 'number') cost = (cost ?? 0) + billed;
+            return response;
           },
-          apiKey,
-          configured.model,
-        ),
+        },
         {
           minTokens: configured.minTokens,
           maxChars: maxChars > 0 ? maxChars - footer.length : 0,
@@ -195,7 +258,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const stdout = trimmed.output + footer;
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
-        `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${stdout.length} chars) scores=${scores}`,
+        `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${stdout.length} chars) scores=${scores}${cost === undefined ? '' : ` cost=$${cost.toFixed(6)}`}`,
       );
       $.ui.toast(
         `trimmed Bash output ${trimmed.charsBefore}→${stdout.length} chars`,
