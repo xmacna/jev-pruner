@@ -3,10 +3,72 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from evals.full import access_blocker, aggregate, failure_category, trial_blocker
+from evals.full import (
+    access_blocker,
+    aggregate,
+    failure_category,
+    next_pending,
+    trial_blocker,
+    validate_manifest,
+)
 
 
 class FullTests(unittest.TestCase):
+    def test_repetitions_are_explicit_paired_and_never_overwritten(self) -> None:
+        rows = [
+            {
+                "task": "same",
+                "repetition": repetition,
+                "arm": arm,
+                "job_name": f"same-{repetition}-{arm}",
+                "state": "pending",
+            }
+            for repetition in (1, 2)
+            for arm in ("control", "plugin")
+        ]
+        validate_manifest(rows, task_count=1, repetitions=2)
+        with self.assertRaises(ValueError):
+            validate_manifest(rows, task_count=1)
+        with self.assertRaises(ValueError):
+            validate_manifest([*rows[:3], {**rows[3], "repetition": 1}], 1, 2)
+        rows[0]["state"] = "running"
+        self.assertEqual(next_pending(rows), 2)
+        rows[0].update(state="finished", reward=1, claude_cost_usd_reported=2)
+        rows[1].update(state="finished", reward=0, claude_cost_usd_reported=3)
+        rows[2].update(state="finished", reward=0, claude_cost_usd_reported=4)
+        rows[3].update(state="finished", reward=1, claude_cost_usd_reported=5)
+        summary = aggregate(rows)
+        self.assertEqual(len(summary["pairs"]), 2)
+        self.assertEqual([row["control_reward"] for row in summary["pairs"]], [1, 0])
+        self.assertEqual([row["plugin_reward"] for row in summary["pairs"]], [0, 1])
+        self.assertEqual(
+            summary["aggregate"]["control"]["claude_estimated_usd_known"], 6
+        )
+        self.assertEqual(
+            summary["aggregate"]["plugin"]["claude_estimated_usd_known"], 8
+        )
+
+    def test_subset_requires_explicit_size_and_complete_unique_pairs(self) -> None:
+        manifest = [
+            {"task": task, "arm": arm, "job_name": f"{task}-{arm}"}
+            for task in ("one", "two")
+            for arm in ("control", "plugin")
+        ]
+        validate_manifest(manifest, task_count=2)
+        with self.assertRaisesRegex(ValueError, "Expected 89 tasks"):
+            validate_manifest(manifest)
+        with self.assertRaisesRegex(ValueError, "Expected 3 tasks"):
+            validate_manifest(manifest, task_count=3)
+        for malformed in (
+            [*manifest[:-1], manifest[-2]],
+            [{**row, "arm": "other"} for row in manifest],
+            [{**row, "job_name": "same"} for row in manifest],
+        ):
+            with self.subTest(manifest=malformed), self.assertRaises(ValueError):
+                validate_manifest(malformed, task_count=2)
+        with self.assertRaises(ValueError):
+            validate_manifest([], task_count=0)
+
     def test_install_exit_errors_are_setup_failures_only_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             job = Path(directory)

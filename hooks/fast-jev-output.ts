@@ -8,14 +8,23 @@ import type {
 import {
   DEFAULT_MODEL,
   buildJevRequest,
+  estimateTokens,
   isOpenRouterKey,
   jevEndpoint,
   parseJevResponse,
 } from '../src/jev.js';
-import { exceedsOutputThreshold, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
+import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS, recoveryFooter, trimOutput } from '../src/output.js';
+import type { TrimOutputResult } from '../src/output.js';
 import type { JevAsker, JevProvider } from '../src/jev.js';
+import { looksSecret } from '../src/secrets.js';
+import { classifyInformation } from '../src/retention.js';
+import type { InformationCategory } from '../src/retention.js';
+
+export { looksSecret } from '../src/secrets.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
+const DEFAULT_MAX_SCORING_REQUESTS = 11;
+const VISIBLE_CHARS_PER_REQUEST = 192;
 const DEFAULTS = {
   persistedMaxChars: 8_000,
   chunkLines: 20,
@@ -44,9 +53,12 @@ export type HookFetch = (
 
 export type HookConfig = {
   apiKey?: string;
+  chunkChars?: number;
+  diagnostics?: boolean;
   chunkLines: number;
   keepThreshold: number;
   maxStateTokens: number;
+  maxScoringRequests?: number;
   minTokens: number;
   persistedOutputs: boolean;
   persistedMaxChars: number;
@@ -83,6 +95,14 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   if (provider === 'typesafe' || provider === 'openrouter') config.provider = provider;
   const baseUrl = optionString(options, 'baseUrl');
   if (baseUrl) config.baseUrl = baseUrl;
+  const chunkChars = optionNumber(options, 'chunkChars', 0);
+  if (chunkChars > 0) config.chunkChars = chunkChars;
+  if (options.diagnostics === true) config.diagnostics = true;
+  if (options.maxScoringRequests !== undefined) {
+    config.maxScoringRequests = Math.max(0, Math.floor(
+      optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
+    ));
+  }
   return config;
 }
 
@@ -176,42 +196,72 @@ export async function getJevCredentials(
   };
 }
 
-const SECRET_COMMAND =
-  /(^|[|;&]\s*)(printenv|env)\b|\.env\b|\b(secret|secrets|credential|credentials|password|token|keychain|netrc|id_rsa|private[_-]?key)\b/i;
-const SECRET_OUTPUT =
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(aws_secret_access_key|api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[=:]\s*\S|:\/\/[^\s:@/]+:[^\s:@/]+@/i;
-
-export function looksSecret(command: string, output: string): boolean {
-  return SECRET_COMMAND.test(command) || SECRET_OUTPUT.test(output);
-}
-
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
+  const archives = new Set<string>();
 
   on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
     const answer = await next(event);
+    const started = Date.now();
+    let decision = answer.deny !== undefined ? 'denied' : answer.isError ? 'tool_error' : 'missing_result';
+    let stage = 'result';
+    let requests = 0;
+    let sourceChars: number | null = null;
+    let sourceEstimatedTokens: number | null = null;
+    let modelVisibleBudgetChars: number | null = null;
+    let requestLimit: number | null = null;
+    let pruning: TrimOutputResult | undefined;
+    let informationCategory: InformationCategory | null = null;
+    const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
+    const hookStdoutCharsBefore = original?.stdout.length ?? null;
+    let hookStdoutCharsAfter = hookStdoutCharsBefore;
     try {
       if (answer.deny !== undefined || answer.isError || !answer.result) return answer;
+      decision = 'archive_recovery';
+      if ([...archives].some(path => event.command.includes(path))) return answer;
       const record = answer.result;
       const persisted = record.persistedOutputPath;
+      decision = 'persisted_disabled';
       if (persisted && !configured.persistedOutputs) return answer;
+      stage = 'read_output';
       const output = persisted ? await $.fs.read(persisted) : record.stdout;
+      sourceChars = output.length;
+      if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
+      decision = 'below_threshold';
       if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
+      decision = 'binary';
+      if (looksBinary(output)) return answer;
+      informationCategory = classifyInformation(output);
+      decision = 'document';
+      if (classifyOutput(event.command, output) === 'document') return answer;
       const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
+      stage = 'credentials';
       const credentials = await getJevCredentials($, configured);
+      decision = 'missing_key';
       if (!credentials) return answer;
       const endpoint = jevEndpoint(credentials.provider, configured);
+      stage = 'history';
       const messages = await $.session.messages();
       const goal = goalFromMessages(messages);
       const secret = looksSecret(event.command, combined);
       const path = secret
         ? undefined
         : persisted ?? `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
-      const footer = path
-        ? `\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
-        : '';
-      const maxChars = persisted ? Math.max(0, configured.persistedMaxChars) : 0;
-      if (maxChars > 0 && maxChars <= footer.length) return answer;
+      const footer = recoveryFooter(path);
+      const maxChars = persisted
+        ? Math.min(
+          Math.max(0, configured.persistedMaxChars) || Infinity,
+          answer.text?.length ?? Infinity,
+        )
+        : Infinity;
+      if (Number.isFinite(maxChars)) modelVisibleBudgetChars = maxChars;
+      const visibleChars = Math.min(maxChars, answer.text?.length ?? combined.length);
+      requestLimit = Math.min(
+        1 + (configured.maxScoringRequests ?? DEFAULT_MAX_SCORING_REQUESTS),
+        Math.max(1, Math.ceil(visibleChars / VISIBLE_CHARS_PER_REQUEST)),
+      );
+      decision = 'footer_exceeds_budget';
+      if (maxChars <= footer.length) return answer;
       let archived: Promise<void> | undefined;
       const saveOutput = async (): Promise<void> => {
         if (!path || persisted) return;
@@ -219,9 +269,13 @@ export const register: Register = (on: On, options: PluginOptions) => {
         if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
         await $.fs.write(path, combined);
       };
+      stage = 'scoring';
       const asker = jevAsker(
         async (url, init) => {
+          stage = 'archive';
           if (path) await (archived ??= saveOutput());
+          stage = 'scoring';
+          requests += 1;
           const response = await $.http.fetch(url, init);
           return { status: response.status, ok: response.ok, text: response.text };
         },
@@ -248,14 +302,21 @@ export const register: Register = (on: On, options: PluginOptions) => {
         },
         {
           minTokens: configured.minTokens,
-          maxChars: maxChars > 0 ? maxChars - footer.length : 0,
+          maxChars: Number.isFinite(maxChars) ? maxChars : 0,
+          compactMarkers: true,
           chunkLines: configured.chunkLines,
+          chunkChars: configured.chunkChars,
           keepThreshold: configured.keepThreshold,
           maxStateTokens: configured.maxStateTokens,
+          maxScoringRequests: requestLimit - 1,
+          onDecision: reason => { decision = reason; },
         },
       );
+      pruning = trimmed;
       if (!trimmed.trimmed) return answer;
-      const stdout = trimmed.output + footer;
+      stage = 'publish';
+      const stdout = trimmed.output;
+      if (path) archives.add(path);
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
         `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${stdout.length} chars) scores=${scores}${cost === undefined ? '' : ` cost=$${cost.toFixed(6)}`}`,
@@ -268,11 +329,33 @@ export const register: Register = (on: On, options: PluginOptions) => {
       delete result.persistedOutputPath;
       delete result.persistedOutputSize;
       if (persisted) result.stderr = '';
+      hookStdoutCharsAfter = stdout.length;
       return { result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      $.ui.log(`bash output trim skipped (${message})`);
+    } catch {
+      decision = 'hook_error';
+      $.ui.log(`bash output trim skipped (stage=${stage})`);
       return answer;
+    } finally {
+      if (configured.diagnostics) {
+        try {
+          $.ui.log(`fast-jev-output decision ${JSON.stringify({
+            version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
+            informationCategory,
+            persisted: Boolean(original?.persistedOutputPath),
+            modelVisibleCharsBefore: answer.text?.length ?? null,
+            modelVisibleBudgetChars,
+            sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
+            hookStderrCharsBefore: original?.stderr.length ?? null,
+            hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
+              ? 0 : original?.stderr.length ?? null,
+            chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
+            withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
+            requests, requestLimit, elapsedMs: Date.now() - started,
+          })}`);
+        } catch {
+          // Diagnostics cannot change the tool result.
+        }
+      }
     }
   });
 };
