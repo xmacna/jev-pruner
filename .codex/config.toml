@@ -1,0 +1,4 @@
+# Codex carrega este arquivo depois que o desenvolvedor confia no repositorio.
+# Nao adicione AGENTS.md: ele tem precedencia e desativa estes fallbacks.
+project_doc_fallback_filenames = ["CLAUDE.md", "SPEC.md", "README.md"]
+project_doc_max_bytes = 131072
