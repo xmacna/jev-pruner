@@ -35,7 +35,8 @@ aplicado, pois isso alteraria dependências sem diagnóstico de compatibilidade.
 
 ## Contrato operacional do piloto
 
-- A instalação é local ao projeto Argos; não há ativação global.
+- O marketplace local está registrado no catálogo do Codex, com o plugin
+  desabilitado globalmente e habilitado somente no projeto Argos.
 - A skill é opt-in: apenas comandos explicitamente envolvidos pelo wrapper são
   candidatos à poda.
 - Só stdout acima de 10.000 tokens estimados é elegível.
@@ -45,8 +46,9 @@ aplicado, pois isso alteraria dependências sem diagnóstico de compatibilidade.
   autoignora no Git; o resultado podado cita esse caminho.
 - Ausência de `CODEX_THREAD_ID`, transcript correspondente, credencial ou rede
   mantém o stdout exato.
-- Rollback: remover as entradas `jev-pruner-codex` de `.codex/config.toml`; nenhum
-  dado de usuário ou credencial fica no repositório.
+- Rollback: remover as entradas `jev-pruner-codex` do `.codex/config.toml` do
+  Argos, executar `codex plugin remove jev-pruner@jev-pruner-codex` e remover o
+  marketplace local. Nenhum dado de usuário ou credencial fica no repositório.
 
 ## Limite conhecido
 

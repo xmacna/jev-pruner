@@ -40,5 +40,6 @@
 - Suíte offline, typecheck, build e validação de plugin verdes.
 - Reprodução de `required_receipt` preserva o dado ou retorna exatamente o original.
 - OpenRouter e TypeSafe mantêm contratos separados e testados.
-- Nenhuma configuração global, credencial, ativação automática ou push upstream.
+- Marketplace registrado no catálogo do Codex, mas plugin desabilitado globalmente;
+  ativação somente no `.codex/config.toml` do Argos. Nenhuma credencial ou push upstream.
 - Relatório separa teste offline, integração local, live e ainda não medido.
