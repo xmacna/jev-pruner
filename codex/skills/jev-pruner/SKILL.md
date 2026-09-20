@@ -28,9 +28,14 @@ unchanged, and preserves the exit code. It does not intercept other shell calls.
 Only stdout over 10,000 estimated tokens is eligible. The trusted `PreToolUse`
 hook records the current transcript path; the wrapper uses `CODEX_THREAD_ID` to
 load that session's user/assistant messages and complete recorded tool results.
-Missing history, missing `TYPESAFE_API_KEY`, blocked Jev network access, failed
+Missing history, missing Jev credentials, blocked network access, failed
 commands, archive failures, and scoring failures return the original stdout.
 Never claim pruning occurred without seeing an omission marker.
+
+TypeSafe is the default provider through `TYPESAFE_API_KEY`. OpenRouter is opt-in
+with `JEV_PROVIDER=openrouter` and `OPENROUTER_API_KEY`; an `sk-or-...` key in the
+legacy `TYPESAFE_API_KEY` variable is also recognized. Never put either key in a
+prompt, command argument, archive, or tracked file.
 
 Read or search the archive path in the final footer whenever omitted output is
 needed. Retained text is verbatim; Jev does not generate a summary.

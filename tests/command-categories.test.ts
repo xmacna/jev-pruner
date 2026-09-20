@@ -73,6 +73,25 @@ describe('output categories', () => {
   it('does not mistake bracketed log messages for a JSON document', () => {
     expect(classifyOutput('npm test', `[test] started\n${noise}`)).toBe('build');
   });
+
+  it('preserves source-like search output as a complete reference document', async () => {
+    const output = Array.from(
+      { length: 800 },
+      (_, i) => `vendor/generated/cache.ts:${i + 1}: const cachedExpiry${i} = sessionTtl;`,
+    ).join('\n');
+    const ask = vi.fn(dropAll);
+
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
+    expect(classifyOutput('rg -n expiry src vendor', output)).toBe('document');
+    const result = await trimOutput(
+      { command: 'rg -n expiry src vendor', goal: 'Locate session expiry.', output },
+      { ask },
+    );
+
+    expect(result.output).toBe(output);
+    expect(result.trimmed).toBe(false);
+    expect(ask).not.toHaveBeenCalled();
+  });
 });
 
 describe('category scoring state', () => {

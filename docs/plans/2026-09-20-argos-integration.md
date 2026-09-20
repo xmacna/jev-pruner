@@ -16,24 +16,24 @@
 
 ## Task 1 — incorporar upstream sem perder OpenRouter
 
-- [ ] Reproduzir a perda conhecida em `193a1bd` com zero chamadas reais.
-- [ ] Mesclar `upstream/main` no checkout isolado e resolver conflitos preservando as duas linhas de evolução.
-- [ ] Instalar dependências pelo lock e executar testes/typecheck/build antes de mudanças próprias.
-- [ ] Confirmar por testes que seleção de provedor, endpoint, modelo, custo e fallback OpenRouter continuam válidos.
+- [x] Reproduzir a perda conhecida em `193a1bd` com zero chamadas reais.
+- [x] Mesclar `upstream/main` no checkout isolado e resolver conflitos preservando as duas linhas de evolução.
+- [x] Instalar dependências pelo lock e executar testes/typecheck/build antes de mudanças próprias.
+- [x] Confirmar por testes que seleção de provedor, endpoint, modelo, custo e fallback OpenRouter continuam válidos.
 
 ## Task 2 — regressões do contrato do Argos
 
-- [ ] Adicionar teste do recibo obrigatório com escore simulado 0,99 e orçamento de 8.000 caracteres.
-- [ ] Cobrir falha/refinamento insuficiente e garantir retorno exato do original quando o necessário não cabe.
-- [ ] Cobrir bypasses e recuperação integral por hash sem depender de precisão do modelo.
-- [ ] Rodar o reprodutor arquivado contra a integração e registrar chamadas, bytes, tempo e RSS.
+- [x] Adicionar teste do recibo obrigatório com escore simulado 0,99 e orçamento de 8.000 caracteres.
+- [x] Cobrir falha/refinamento insuficiente e garantir retorno exato do original quando o necessário não cabe.
+- [x] Cobrir bypasses e recuperação integral por hash sem depender de precisão do modelo.
+- [x] Rodar o reprodutor arquivado contra a integração e registrar chamadas, bytes, tempo e RSS.
 
 ## Task 3 — harness real e piloto opt-in
 
-- [ ] Validar plugin Claude e wrapper Codex na versão instalada, sem habilitação global.
-- [ ] Provar contexto/ID ausente como bypass, nunca como uso do transcript de outra sessão.
-- [ ] Se houver credencial dedicada disponível, executar avaliação live pequena e registrar custo total, latência e retenção; caso contrário, registrar a limitação sem simular prova live.
-- [ ] Documentar instalação reversível no Argos, elegibilidade acima de 10k tokens e arquivo integral recuperável.
+- [x] Validar plugin Claude e wrapper Codex na versão instalada, sem habilitação global.
+- [x] Provar contexto/ID ausente como bypass, nunca como uso do transcript de outra sessão.
+- [x] Se houver credencial dedicada disponível, executar avaliação live pequena e registrar custo total, latência e retenção; caso contrário, registrar a limitação sem simular prova live.
+- [x] Documentar instalação reversível no Argos, elegibilidade acima de 10k tokens e arquivo integral recuperável.
 
 ## Porta final
 

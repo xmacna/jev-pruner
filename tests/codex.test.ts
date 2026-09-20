@@ -137,6 +137,31 @@ describe('Codex output pruning', () => {
     expect(discard).not.toHaveBeenCalled();
   });
 
+  it('sends Codex scoring to the configured endpoint and model', async () => {
+    const options = await fixture();
+    const fetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        answers: Object.fromEntries(
+          Array.from({ length: 20 }, (_, index) => [`c${index}`, { noul: 0 }]),
+        ),
+      }),
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    await pruneCodexOutput(output, 'npm test', {
+      ...options,
+      asker: undefined,
+      model: '~typesafe/jev-latest',
+      baseUrl: 'https://openrouter.ai/api/alpha/decisions',
+    });
+
+    expect(fetch).toHaveBeenCalled();
+    expect(fetch.mock.calls[0]![0]).toBe('https://openrouter.ai/api/alpha/decisions');
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).model).toBe('~typesafe/jev-latest');
+  });
+
   it('fails open for missing state, absent keys, structured output and secret-like content', async () => {
     const options = await fixture();
     for (const extra of [{ sessionId: undefined }, { apiKey: undefined }, { home: '/unavailable' }]) {

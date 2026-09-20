@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { codexJevConfig } from './config.js';
 import { pruneCodexOutput } from './prune.js';
 
 const args = process.argv.slice(2);
@@ -44,11 +45,15 @@ if (args[0] !== '--' || args.length < 2) {
   child.on('close', async (code, signal) => {
     if (!streaming) {
       const output = Buffer.concat(buffers);
+      const jev = codexJevConfig(process.env);
       const displayed = code === 0 && !signal
         ? await pruneCodexOutput(output, [command, ...parameters].join(' '), {
           cwd: process.cwd(),
           sessionId: process.env.CODEX_THREAD_ID,
-          apiKey: process.env.TYPESAFE_API_KEY,
+          apiKey: jev?.apiKey,
+          model: jev?.model,
+          baseUrl: jev?.baseUrl,
+          maxScoringRequests: jev?.maxScoringRequests,
           signal: controller.signal,
         })
         : output;

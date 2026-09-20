@@ -15,6 +15,9 @@ export async function pruneCodexOutput(
     cwd: string;
     sessionId?: string;
     apiKey?: string;
+    model?: string;
+    baseUrl?: string;
+    maxScoringRequests?: number;
     home?: string;
     asker?: JevAsker;
     signal?: AbortSignal;
@@ -45,7 +48,11 @@ export async function pruneCodexOutput(
           if (options.signal?.aborted) throw new Error('Command interrupted');
           await (archived ??= archive());
           if (options.asker) return options.asker.ask(state, questions);
-          const request = buildJevRequest({ apiKey }, state, questions);
+          const request = buildJevRequest({
+            apiKey,
+            model: options.model,
+            baseUrl: options.baseUrl,
+          }, state, questions);
           const controller = new AbortController();
           const cancel = () => controller.abort();
           options.signal?.addEventListener('abort', cancel, { once: true });
@@ -63,6 +70,7 @@ export async function pruneCodexOutput(
           }
         },
       },
+      { maxScoringRequests: options.maxScoringRequests },
     );
     return result.trimmed && !options.signal?.aborted
       ? Buffer.from(`${result.output}\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`)

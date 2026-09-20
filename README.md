@@ -172,9 +172,9 @@ Codex 0.152.1 installed and authenticated, skip the install and login commands.
 ### 2. Configure Jev access
 
 Create a [TypeSafe API key](https://console.typesafe.ai/settings/keys) and ensure
-your account has [API credits](https://console.typesafe.ai/settings/billing).
-**Your Codex subscription runs Codex; Jev scoring uses the separate TypeSafe API
-and incurs TypeSafe usage.**
+your account has [API credits](https://console.typesafe.ai/settings/billing), or
+use an OpenRouter key with access to Jev. **Your Codex subscription runs Codex;
+Jev scoring uses the selected provider separately and incurs that provider's usage.**
 
 Make `TYPESAFE_API_KEY` available in the terminal where you will launch Codex.
 You can use your existing secret manager or enter it without echoing the key
@@ -190,6 +190,20 @@ export TYPESAFE_API_KEY
 Paste the key at the prompt and press Enter. This export lasts for the current
 terminal session; repeat it in a new terminal or use your existing environment
 configuration. Do not put the key in a Codex prompt or commit it to the repository.
+
+For OpenRouter, select it explicitly and expose its key to the same terminal:
+
+```sh
+export JEV_PROVIDER=openrouter
+printf 'OpenRouter API key: '
+read -r -s OPENROUTER_API_KEY
+printf '\n'
+export OPENROUTER_API_KEY
+```
+
+For compatibility, an `sk-or-...` key in `TYPESAFE_API_KEY` selects OpenRouter
+automatically. `JEV_MODEL` and `JEV_BASE_URL` override the selected provider's
+model and endpoint. An invalid provider or mismatched/missing key disables pruning.
 
 ### 3. Build and install the plugin
 
@@ -222,7 +236,7 @@ codex --sandbox workspace-write \
 ```
 
 This starts a new session with workspace-write sandboxing and network access so
-the wrapper can reach `https://api.typesafe.ai/v1/systemone`. Command approvals
+the wrapper can reach the selected TypeSafe or OpenRouter endpoint. Command approvals
 still apply. The 30,000-token setting raises Codex's separate host output limit;
 otherwise Codex can truncate a result even after the wrapper has pruned it.
 
@@ -337,6 +351,11 @@ user/assistant messages and full tool inputs/results, including custom tools.
 It does not load reasoning items or system/developer prompts. Earlier originals
 that Codex already truncated or compacted are not reconstructed.
 Unavailable, malformed, or mismatched history disables pruning.
+TypeSafe is the default. `JEV_PROVIDER=openrouter` uses `OPENROUTER_API_KEY` and
+maps `jev-latest` to `~typesafe/jev-latest`; an OpenRouter-formatted key in the
+legacy variable is auto-detected. The Codex wrapper caps OpenRouter scoring at
+six total requests; incomplete coverage remains verbatim. Provider failures
+preserve stdout.
 
 Before scoring, original stdout is archived in the command workdir's
 `.jev-pruner/` directory with private file permissions and a local `.gitignore`.
@@ -349,7 +368,7 @@ is a heuristic for the current command/output, not transcript redaction.
 ### Sustained Codex validation
 
 After building and installing the local plugin, authenticate Codex and supply
-`TYPESAFE_API_KEY` to run the billable CLI integration test:
+the selected provider's Jev credentials to run the billable CLI integration test:
 
 ```sh
 JEV_CODEX_STAGES=2 npm run test:codex-session   # short harness check
@@ -602,7 +621,8 @@ For live Jev checks, provide `TYPESAFE_API_KEY` in the environment and run
 and output fixtures. Set `JEV_LIVE_PROVIDER=openrouter` and `OPENROUTER_API_KEY`
 to run the same checks through OpenRouter. It checks task-dependent retention, tool-result inclusion,
 parallel history/output batching, digit-heavy state budgets, paired comparisons
-of general versus category guidance on build and search fixtures, and the hook's behavior when Jev
+of general versus category guidance on build logs, conservative bypass of
+source-like search output, and the hook's behavior when Jev
 rejects authentication. It runs separately from `npm test` and does not exercise
 the Claude Code host itself.
 
