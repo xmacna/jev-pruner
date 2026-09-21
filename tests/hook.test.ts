@@ -17,6 +17,12 @@ describe('hook configuration', () => {
     expect(resolveHookConfig({ persistedOutputs: false }).persistedOutputs).toBe(false);
   });
 
+  it('allowSmallOutputs lets minTokens fall below the floor', () => {
+    expect(resolveHookConfig({ minTokens: 4_000 }).minTokens).toBe(10_000);
+    expect(resolveHookConfig({ minTokens: 4_000, allowSmallOutputs: true }).minTokens).toBe(4_000);
+    expect(resolveHookConfig({ allowSmallOutputs: true }).minTokens).toBe(10_000);
+  });
+
   it('accepts option overrides', () => {
     expect(
       resolveHookConfig({

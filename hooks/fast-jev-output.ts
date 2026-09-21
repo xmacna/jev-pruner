@@ -85,7 +85,11 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     chunkLines: optionNumber(options, 'chunkLines', DEFAULTS.chunkLines),
     keepThreshold: optionNumber(options, 'keepThreshold', DEFAULTS.keepThreshold),
     maxStateTokens: optionNumber(options, 'maxStateTokens', DEFAULTS.maxStateTokens),
-    minTokens: Math.max(MIN_OUTPUT_TOKENS, optionNumber(options, 'minTokens', DEFAULTS.minTokens)),
+    // O piso fica em exceedsOutputThreshold, que allowSmallOutputs libera; aplicá-lo aqui
+    // tornava a opção inócua (Argos, 21/09/2026: minTokens 4000 voltava 10000).
+    minTokens: options.allowSmallOutputs === true
+      ? optionNumber(options, 'minTokens', DEFAULTS.minTokens)
+      : Math.max(MIN_OUTPUT_TOKENS, optionNumber(options, 'minTokens', DEFAULTS.minTokens)),
     allowSmallOutputs: options.allowSmallOutputs === true,
     exceedNativePreview: options.exceedNativePreview === true,
     persistedOutputs:
