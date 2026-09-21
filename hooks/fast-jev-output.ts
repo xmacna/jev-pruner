@@ -60,6 +60,8 @@ export type HookConfig = {
   maxStateTokens: number;
   maxScoringRequests?: number;
   minTokens: number;
+  allowSmallOutputs: boolean;
+  exceedNativePreview: boolean;
   persistedOutputs: boolean;
   persistedMaxChars: number;
   model: string;
@@ -84,6 +86,8 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     keepThreshold: optionNumber(options, 'keepThreshold', DEFAULTS.keepThreshold),
     maxStateTokens: optionNumber(options, 'maxStateTokens', DEFAULTS.maxStateTokens),
     minTokens: Math.max(MIN_OUTPUT_TOKENS, optionNumber(options, 'minTokens', DEFAULTS.minTokens)),
+    allowSmallOutputs: options.allowSmallOutputs === true,
+    exceedNativePreview: options.exceedNativePreview === true,
     persistedOutputs:
       typeof options.persistedOutputs === 'boolean' ? options.persistedOutputs : true,
     persistedMaxChars: optionNumber(options, 'persistedMaxChars', DEFAULTS.persistedMaxChars),
@@ -228,7 +232,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       sourceChars = output.length;
       if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
       decision = 'below_threshold';
-      if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
+      if (!exceedsOutputThreshold(output, configured.minTokens, configured.allowSmallOutputs)) return answer;
       decision = 'binary';
       if (looksBinary(output)) return answer;
       informationCategory = classifyInformation(output);
@@ -248,11 +252,15 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ? undefined
         : persisted ?? `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
       const footer = recoveryFooter(path);
+      // Com saída persistida o teto é o menor entre persistedMaxChars e a prévia que o
+      // host já mostra. Em Claude Code a prévia tem ~2 KB, menor que as linhas protegidas
+      // de um log de teste, e o resultado volta inteiro (budget_unfit) enquanto o agente lê
+      // o arquivo pelo Read, fora do hook. exceedNativePreview troca esse teto por
+      // persistedMaxChars: o modelo passa a ver o texto podado, que é mais curto que o
+      // arquivo que ele leria de qualquer forma (Argos, 21/09/2026).
+      const nativeBudget = configured.exceedNativePreview ? Infinity : answer.text?.length ?? Infinity;
       const maxChars = persisted
-        ? Math.min(
-          Math.max(0, configured.persistedMaxChars) || Infinity,
-          answer.text?.length ?? Infinity,
-        )
+        ? Math.min(Math.max(0, configured.persistedMaxChars) || Infinity, nativeBudget)
         : Infinity;
       if (Number.isFinite(maxChars)) modelVisibleBudgetChars = maxChars;
       const visibleChars = Math.min(maxChars, answer.text?.length ?? combined.length);
@@ -302,6 +310,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         },
         {
           minTokens: configured.minTokens,
+          allowSmallOutputs: configured.allowSmallOutputs,
           maxChars: Number.isFinite(maxChars) ? maxChars : 0,
           compactMarkers: true,
           chunkLines: configured.chunkLines,

@@ -30,6 +30,8 @@ describe('hook configuration', () => {
     ).toEqual({
       apiKey: 'key',
       minTokens: 15_000,
+      allowSmallOutputs: false,
+      exceedNativePreview: false,
       persistedOutputs: true,
       persistedMaxChars: 8000,
       chunkLines: 5,

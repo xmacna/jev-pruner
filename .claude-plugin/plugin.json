@@ -79,6 +79,18 @@
       "type": "string",
       "title": "Jev endpoint URL",
       "description": "Overrides the provider's Jev endpoint, for example a proxy."
+    },
+    "allowSmallOutputs": {
+      "type": "boolean",
+      "title": "Allow outputs below 10k tokens",
+      "description": "Lets minTokens fall below 10,000. Only useful where the host never delivers a larger output to the hook.",
+      "default": false
+    },
+    "exceedNativePreview": {
+      "type": "boolean",
+      "title": "Exceed the host preview for saved output",
+      "description": "For host-saved output, use persistedMaxChars as the budget instead of the host's preview size.",
+      "default": false
     }
   }
 }

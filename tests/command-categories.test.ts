@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { classifyOutput, trimOutput } from '../src/output.js';
+import { classifyOutput, exceedsOutputThreshold, trimOutput } from '../src/output.js';
 import { estimateStateTokens, estimateTokens } from '../src/jev.js';
 import type { JevQuestions, JevState } from '../src/jev.js';
 
@@ -213,5 +213,23 @@ describe('test logs quoting source lines (Argos, 21/09/2026)', () => {
     const source = Array.from({ length: 200 }, (_, i) => `def f${i}(x):\n    import os\n    return x`).join('\n');
     expect(classifyOutput('cat app.py', source)).toBe('document');
     expect(classifyOutput('rg -n "def " src', source)).toBe('document');
+  });
+});
+
+describe('opções para hosts que já cortam a saída (Argos, 21/09/2026)', () => {
+  const grande = Array.from({ length: 400 }, (_, i) => `INFO worker ${i} cache unchanged unchanged unchanged`).join('\n');
+
+  it('mantém o piso de 10k tokens por padrão', () => {
+    expect(estimateTokens(grande)).toBeLessThan(10_000);
+    expect(exceedsOutputThreshold(grande, 2_000)).toBe(false);
+  });
+
+  it('allowSmallOutputs deixa minTokens descer abaixo do piso', () => {
+    expect(exceedsOutputThreshold(grande, 2_000, true)).toBe(true);
+    expect(exceedsOutputThreshold(grande, 50_000, true)).toBe(false);
+  });
+
+  it('sem minTokens explícito o piso continua valendo mesmo com allowSmallOutputs', () => {
+    expect(exceedsOutputThreshold(grande, undefined, true)).toBe(false);
   });
 });

@@ -543,6 +543,20 @@ next batch, so a limited allowance can still finish scoring some chunks.
 A 76,379-char log went from a 2,227-char preview that did not contain the error
 line to 4,013 chars of pruned output that did.
 
+## Claude Code: which outputs the hook can actually rewrite
+
+Measured on Claude Code 2.1.278 with Haiku 4.5 (Argos, 21/09/2026):
+
+| Bash result | What the model gets | What this plugin can do |
+| --- | --- | --- |
+| Non-zero exit (every failing test run) | error text truncated to ~10,000 chars, head only, so the final summary is lost | nothing: the hook returns early on `isError`, and the full output is not offered to it |
+| Exit 0, output over ~30 KB | `<persisted-output>` with a ~2 KB preview plus the file path | budget is that preview, so a log whose protected diagnostics exceed it comes back whole (`budget_unfit`); the agent then reads the file with `Read`, which no hook sees. `exceedNativePreview` replaces that budget with `persistedMaxChars` |
+| Exit 0, output under ~30 KB | the output inline | prunes normally, but only above the 10,000-token gate, which ordinary prose reaches at roughly 40 KB. `allowSmallOutputs` lowers the gate into this band |
+
+With the defaults, a 26 KB test log went from 25,976 to 2,502 chars and kept the
+`FAILED` line and the totals. The same plugin left an 84 KB failing-suite log
+untouched in every arm of a four-agent experiment, for the reasons above.
+
 ## Configuration
 
 Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
@@ -566,6 +580,8 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
 | `persistedOutputs` | `true` | Prune eligible output saved by Claude |
 | `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables this configured cap. The native preview size, when available, remains an upper bound |
+| `allowSmallOutputs` | `false` | Lets `minTokens` fall below 10,000. Only useful where the host never delivers a larger output to the hook |
+| `exceedNativePreview` | `false` | For host-saved output, uses `persistedMaxChars` as the budget instead of the host's preview size |
 | `maxScoringRequests` | `11` | Additional Jev calls beyond the first; shared across scoring, retries and refinement. Also bounded by visible preview size. 0 permits one call |
 | `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
 | `chunkChars` | `0` | Optional character target instead of line grouping; 0 uses `chunkLines` |

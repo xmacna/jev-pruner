@@ -26,6 +26,8 @@ export type TrimDecision = 'below_threshold' | 'binary' | 'document' | 'few_chun
 
 export interface TrimOutputOptions {
   minTokens?: number;
+  /** Let `minTokens` fall below MIN_OUTPUT_TOKENS (opt-in; see exceedsOutputThreshold). */
+  allowSmallOutputs?: boolean;
   chunkLines?: number;
   /** Optional character target instead of line grouping; 0 uses chunkLines. */
   chunkChars?: number;
@@ -78,8 +80,16 @@ function finite(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-export function exceedsOutputThreshold(output: string, minTokens?: number): boolean {
-  return estimateTokens(output) > Math.max(MIN_OUTPUT_TOKENS, finite(minTokens, MIN_OUTPUT_TOKENS));
+/**
+ * `minTokens` normally cannot go below MIN_OUTPUT_TOKENS. `allowSmallOutputs`
+ * lifts that floor for a host that never lets a larger output reach the hook:
+ * in Claude Code a command over ~30 KB is persisted to a file and the hook's
+ * budget becomes the model-visible preview, so the only output it can rewrite
+ * in place is one under that size (Argos, 21/09/2026).
+ */
+export function exceedsOutputThreshold(output: string, minTokens?: number, allowSmallOutputs = false): boolean {
+  const floor = allowSmallOutputs ? 0 : MIN_OUTPUT_TOKENS;
+  return estimateTokens(output) > Math.max(floor, finite(minTokens, MIN_OUTPUT_TOKENS));
 }
 
 /** Output with NULs or a lot of control bytes is not text worth chunking. */
@@ -414,7 +424,7 @@ async function trimOutputAttempt(
     finite(options.maxStateTokens, DEFAULT_MAX_STATE_TOKENS),
   );
 
-  if (!exceedsOutputThreshold(input.output, options.minTokens)) return untrimmed(input.output, 0, [], 'below_threshold', options.onDecision);
+  if (!exceedsOutputThreshold(input.output, options.minTokens, options.allowSmallOutputs === true)) return untrimmed(input.output, 0, [], 'below_threshold', options.onDecision);
 
   if (looksBinary(input.output)) return untrimmed(input.output, 0, [], 'binary', options.onDecision);
   const category = classifyOutput(input.command, input.output);
