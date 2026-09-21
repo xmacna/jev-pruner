@@ -174,3 +174,44 @@ describe('category scoring state', () => {
     expect(ask).toHaveBeenCalled();
   });
 });
+
+const pytestTraceback = [
+  '============================= test session starts ==============================',
+  'collected 128 items',
+  '',
+  'ui/middleman/supervisao/test_roteador.py::RoteadorSombraTest::test_bypass FAILED',
+  '=================================== FAILURES ===================================',
+  '_______________________ RoteadorSombraTest.test_bypass ________________________',
+  '',
+  'self = <test_roteador.RoteadorSombraTest testMethod=test_bypass>',
+  '',
+  '    def test_bypass(self):',
+  '        from ui.middleman.persistencia.store import Store',
+  '        import json',
+  '>       self.assertTrue(store.reservar_tentativa_supervisao("c1"))',
+  'E       AssertionError: False is not true',
+  '',
+  'ui/middleman/supervisao/test_roteador.py:287: AssertionError',
+  ...Array.from({ length: 200 }, (_, i) => `    def helper_${i}(self):\n        import os`),
+  '=========================== short test summary info ============================',
+  'FAILED ui/middleman/supervisao/test_roteador.py::RoteadorSombraTest::test_bypass',
+  '========================= 1 failed, 127 passed in 16.59s =========================',
+].join('\n');
+
+describe('test logs quoting source lines (Argos, 21/09/2026)', () => {
+  it.each([
+    'python3 -m pytest ui/middleman -v --tb=long',
+    'pytest -v -rfE',
+    'cd ui/middleman/supervisao && python3 -m pytest -v',
+    'python3 -m pytest ui/middleman 2>&1 | tail -200',
+    'bash scripts/testar-middleman.sh',
+  ])('is build output, not a reference document: %s', command => {
+    expect(classifyOutput(command, pytestTraceback)).toBe('build');
+  });
+
+  it('still preserves source printed by a document command', () => {
+    const source = Array.from({ length: 200 }, (_, i) => `def f${i}(x):\n    import os\n    return x`).join('\n');
+    expect(classifyOutput('cat app.py', source)).toBe('document');
+    expect(classifyOutput('rg -n "def " src', source)).toBe('document');
+  });
+});

@@ -123,18 +123,49 @@ function simpleCommand(command: string): string {
     .replace(/^(?:\/?[\w.-]+\/)+/, '');
 }
 
-export function classifyOutput(command: string, output: string): OutputCategory {
-  if (looksStructured(command, output) || classifyInformation(output) === 'reference') return 'document';
-  const simple = simpleCommand(command);
-  if (/^(rg|grep|egrep|fgrep|find|fd|head|tail|sed|git\s+grep)(?:\s|$)/.test(simple)) return 'search';
-  if (/^(make|gmake|ninja|pytest|jest|vitest|ctest|mvn|gradle|gradlew)(?:\s|$)/.test(simple) ||
+/**
+ * Build, install and test commands. Test-runner logs are classified as build
+ * output before the reference check: their tracebacks quote source lines
+ * (`def`, `import`, `class`), and before this a failing pytest run with
+ * `--tb=long` was a reference document that was never trimmed (Argos,
+ * 21/09/2026: 0 of 64 pytest outputs trimmed; all 28 above the gate were
+ * 'document'). Other build logs keep upstream's reference protection.
+ */
+function isBuildCommand(simple: string): boolean {
+  return /^(make|gmake|ninja|pytest|jest|vitest|ctest|mvn|gradle|gradlew)(?:\s|$)/.test(simple) ||
       /^(npm|pnpm|yarn|bun)\s+(?:(?:run\s+)?(?:build|test|lint|typecheck|check)(?::[\w-]+)*|install|ci|add)(?:\s|$)/.test(simple) ||
       /^(cargo|go)\s+(build|test|check|clippy|install)(?:\s|$)/.test(simple) ||
       /^cmake\s+--build(?:\s|$)/.test(simple) ||
       /^(pip[23]?|uv\s+pip)\s+install(?:\s|$)/.test(simple) ||
-      /^python(?:[23](?:\.\d+)?)?\s+-m\s+(pytest|unittest|build|pip\s+install)(?:\s|$)/.test(simple)) return 'build';
+      /^python(?:[23](?:\.\d+)?)?\s+-m\s+(pytest|unittest|build|pip\s+install)(?:\s|$)/.test(simple);
+}
+
+/** A test-runner log recognized by its own banner, whatever script printed it. */
+const TEST_LOG_SIGNATURE = /^=+ test session starts =+$|^=+ (?:short test summary info|FAILURES|ERRORS) =+$|^=+ \d+ (?:failed|passed|error)s?\b.* in [\d.]+s(?: \([^)]*\))? =+$|^(?:Test Suites|Tests):\s+\d+ (?:passed|failed)/m;
+
+function looksLikeTestLog(output: string): boolean {
+  return TEST_LOG_SIGNATURE.test(output);
+}
+
+/** Test runners only: other build logs keep upstream's reference protection. */
+function isTestRunnerCommand(simple: string): boolean {
+  return /^(pytest|jest|vitest|ctest)(?:\s|$)/.test(simple) ||
+      /^(npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?::[\w-]+)*(?:\s|$)/.test(simple) ||
+      /^(cargo|go)\s+test(?:\s|$)/.test(simple) ||
+      /^(gradlew|gradle|mvn)\s+test(?:\s|$)/.test(simple) ||
+      /^python(?:[23](?:\.\d+)?)?\s+-m\s+(pytest|unittest)(?:\s|$)/.test(simple);
+}
+
+export function classifyOutput(command: string, output: string): OutputCategory {
+  const simple = simpleCommand(command);
+  if (looksStructured(command, output)) return 'document';
+  if (isTestRunnerCommand(simple) || looksLikeTestLog(output)) return 'build';
+  if (classifyInformation(output) === 'reference') return 'document';
+  if (isBuildCommand(simple)) return 'build';
+  if (/^(rg|grep|egrep|fgrep|find|fd|head|tail|sed|git\s+grep)(?:\s|$)/.test(simple)) return 'search';
   return 'unknown';
 }
+
 
 /** Splits over-long lines so one line cannot become an untrimmable chunk. */
 function splitLongLines(output: string): string[] {

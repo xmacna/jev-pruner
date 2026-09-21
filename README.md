@@ -19,7 +19,11 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    short preview. Errors, JSON/XML/YAML/diff/binary output,
    whole-document commands (`cat`, `jq`, `git diff`, `git show`, `base64`, and
    `openssl`) are left untouched. Recognized documentation, source code, and
-   disassembly are also preserved, regardless of which command printed them.
+   disassembly are also preserved, regardless of which command printed them,
+   except inside test-runner logs (`pytest`, `jest`, `vitest`, `python -m
+   unittest`, or any output carrying a pytest/jest banner): their tracebacks
+   quote source lines, and treating them as documents left every failing test
+   run untrimmed.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
    The opt-in `chunkChars` setting groups these lines toward a character target
